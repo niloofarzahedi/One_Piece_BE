@@ -1,0 +1,29 @@
+# Core FastAPI framework
+fastapi
+
+# ASGI server for running FastAPI
+uvicorn[standard]
+
+# PostgreSQL database driver (async)
+asyncpg
+
+# ORM for database interactions
+SQLAlchemy
+
+# Pydantic for data validation and serialization
+pydantic
+
+# Environment variable management
+python-dotenv
+
+# Secure password hashing
+bcrypt
+
+# JWT token generation and verification
+pyjwt
+
+# Database migrations (Alembic for SQLAlchemy)
+alembic
+
+# For handling CORS (if needed for frontend integration)
+fastapi[all]
