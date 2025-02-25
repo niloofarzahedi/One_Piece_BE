@@ -13,7 +13,7 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str  # Plain password for user registration
+    hashed_password: str  # Plain password for user registration
 
 # we need to send id, username, email, created_at fields when returning user info
 

@@ -29,7 +29,7 @@ async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
 @router.post("/users/")
 async def create_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
     new_user = User(username=user.username,
-                    email=user.email, password=user.password)
+                    email=user.email, hashed_password=user.hashed_password)
     db.add(new_user)
     await db.commit()
     await db.refresh(new_user)
