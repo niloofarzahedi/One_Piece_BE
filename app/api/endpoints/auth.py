@@ -8,16 +8,22 @@ from sqlalchemy.future import select
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from app.core.security import verify_password
 from app.core.jwt import create_access_token
+from app.dependencies.auth import get_current_user
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+
+@router.get("/me")
+async def get_me(username: str = Depends(get_current_user)):
+    return {"username": username}
 
 
 @router.post("/login")
 async def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).filter(User.username == form_data.username))
     user = result.scalars().first()
-
+    # check the provided pass with its hash
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=400, detail="Invalid username or password")
