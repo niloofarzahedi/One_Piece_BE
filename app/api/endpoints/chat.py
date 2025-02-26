@@ -120,7 +120,13 @@ async def add_participant(chat_id: int, username: str = Depends(get_current_user
 
 
 @router.get("/{chat_id}/messages", response_model=list[MessageResponse])
-async def get_chat_messages(chat_id: int, username: str = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_chat_messages(
+    chat_id: int,
+    offset: int = 0,
+    limit: int = 20,
+    username: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     try:
         # Retrieve messages for a given chat (only if the user is a participant)
         chat_result = await db.execute(select(ChatRoom).filter(ChatRoom.id == chat_id))
@@ -140,18 +146,35 @@ async def get_chat_messages(chat_id: int, username: str = Depends(get_current_us
             raise HTTPException(
                 status_code=403, detail="Not authorized for this chat")
 
+        # Decide where to fetch messages from based on offset and limit
+        if (offset + limit) <= 50:
+            # Fetch from Redis cache if we're looking at the most recent 50 messages
+            cached_messages = await get_cached_messages(chat_id)
+            if cached_messages:
+                # Apply pagination to the cached messages
+                # Reverse to get newest first, then apply offset and limit
+                paginated_messages = cached_messages[::-1][offset:offset+limit]
+                return paginated_messages
+
+        # Fetch from database if:
+        # 1. We're requesting messages outside the first 50
+        # 2. Or there were no cached messages in Redis
         messages_result = await db.execute(
-            select(ChatMessage).filter(ChatMessage.chat_id == chat_id)
+            select(ChatMessage)
+            .filter(ChatMessage.chat_id == chat_id)
+            .order_by(ChatMessage.created_at.desc())
+            .offset(offset)
+            .limit(limit)
         )
         messages = messages_result.scalars().all()
-        if messages is None:
-            raise HTTPException(status_code=404, detail="No messages found")
 
         message_responses = [
             MessageResponse(
+                id=message.id,
                 chat_id=message.chat_id,
                 sender_id=message.sender_id,
-                message=message.message
+                message=message.message,
+                created_at=message.created_at
             ) for message in messages
         ]
         return message_responses
@@ -227,9 +250,6 @@ async def websocket_endpoint(
                 "message": message_text,
                 "created_at": datetime.utcnow().isoformat(),
             }
-
-            # Cache message in Redis (save it for retrieval in another API)
-            await cache_message(chat_id, message_payload)
 
             # Save message to PostgreSQL
             new_message = ChatMessage(

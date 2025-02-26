@@ -2,3 +2,4 @@
 alembic.ini
 migrations/versions/*
 .venv/
+venv/
