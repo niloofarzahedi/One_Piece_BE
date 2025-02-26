@@ -1,4 +1,5 @@
-from fastapi import APIRouter, WebSocket, Depends, WebSocketException, status, HTTPException
+from dotenv import load_dotenv
+from fastapi import APIRouter, WebSocket, Depends, WebSocketException, status, HTTPException, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies.auth import get_current_user
 from app.db.session import get_db
@@ -7,9 +8,18 @@ from app.db.models.chat import ChatRoom, ChatParticipant, ChatMessage
 from app.schemas.chat import ChatCreate, ChatResponse, MessageResponse
 from sqlalchemy.future import select
 from datetime import datetime
+import json
+import os
+from jose import JWTError, jwt
 
 
 router = APIRouter()
+
+
+load_dotenv()
+# JWT Secret and Algorithm
+SECRET_KEY = os.getenv("SECRET KEY", "").strip()
+ALGORITHM = os.getenv("ALGORITHM")
 
 
 @router.get("/", response_model=list[ChatResponse])
@@ -75,6 +85,38 @@ async def create_chat(chat: ChatCreate, username: str = Depends(get_current_user
         raise HTTPException(status_code=400, detail=str(e)) from None
 
 
+@router.post("/{chat_id}/add_participant")
+async def add_participant(chat_id: int, username: str = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    try:
+        # Add a participant to an existing chat
+        result = await db.execute(select(User).filter(User.username == username))
+        user = result.scalars().first()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # check if chat exists
+        chat_result = await db.execute(select(ChatRoom).filter(ChatRoom.id == chat_id))
+        chat = chat_result.scalars().first()
+        if chat is None:
+            raise HTTPException(status_code=404, detail="Chat not found")
+
+        # check if user is already a participant
+        participant_result = await db.execute(select(ChatParticipant).filter(ChatParticipant.chat_id == chat_id, ChatParticipant.user_id == user.id))
+        existing_participant = participant_result.scalars().first()
+        if existing_participant:
+            raise HTTPException(
+                status_code=400, detail="User is already a participant in this chat")
+
+        # Add the user as a chat participant
+        participant = ChatParticipant(chat_id=chat_id, user_id=user.id)
+        db.add(participant)
+        await db.commit()
+        await db.refresh(participant)
+        return participant
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+
+
 @router.get("/{chat_id}/messages", response_model=list[MessageResponse])
 async def get_chat_messages(chat_id: int, username: str = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     try:
@@ -115,24 +157,103 @@ async def get_chat_messages(chat_id: int, username: str = Depends(get_current_us
         raise HTTPException(status_code=400, detail=str(e)) from None
 
 
-@router.websocket("/ws/chat")
-async def websocket_endpoint(websocket: WebSocket, token: str, db: AsyncSession = Depends(get_db), username: str = Depends(get_current_user)):
-    """Restrict WebSocket access to authenticated users."""
+async def get_current_user_from_token(token: str, db: AsyncSession):
+    """Manually extracts the user from JWT token."""
+    credentials_exception = WebSocketDisconnect(
+        code=1008)  # Unauthorized WebSocket Disconnect
     try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
         if username is None:
-            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
 
-        user = await db.execute(select(User).filter(User.username == username)).scalars().first()
-        if user is None:
-            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+    result = await db.execute(select(User).where(User.username == username))
+    user = result.scalars().first()
+    if user is None:
+        raise credentials_exception
+    return user
 
-        # Accept connection after authentication check
-        await websocket.accept()
-        print("successful connection")
+# Store active WebSocket connections
+active_connections = {}
 
+# WebSocket for authenticated users to send/receive messages
+
+
+@router.websocket("/ws/chat")
+async def websocket_endpoint(
+    websocket: WebSocket,
+    token: str,
+    db: AsyncSession = Depends(get_db)
+):
+
+    # Authenticate user
+    await websocket.accept()
+    # Authenticate user from token
+    user = await get_current_user_from_token(token, db)
+    print(f"User {user.username} connected to WebSocket")
+
+    if not user:
+        await websocket.close()
+        print(f"User {user.username} not found in database")
+        return
+
+    user_id = user.id
+    active_connections[user_id] = websocket
+
+    try:
         while True:
             data = await websocket.receive_text()
-            await websocket.send_text(f"Message received: {data}")
+            print(f"Received message: {data}")
+            message_data = json.loads(data)
+            chat_id = message_data.get("chat_id")
+            message_text = message_data.get("message")
 
-    except WebSocketException:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            # Verify user is in the chat
+            result = await db.execute(
+                select(ChatParticipant).where(
+                    ChatParticipant.chat_id == chat_id,
+                    ChatParticipant.user_id == user_id
+                )
+            )
+            chat_participant = result.scalars().first()
+            if not chat_participant:
+                print(
+                    f"User {user.username} is not a participant in chat {chat_id}")
+                await websocket.send_text("Error: You are not a participant in this chat.")
+                continue
+
+            # Save message to database
+            new_message = ChatMessage(
+                chat_id=chat_id, sender_id=user_id, message=message_text)
+            db.add(new_message)
+            await db.commit()
+            await db.refresh(new_message)
+
+            # Create response payload
+            response = MessageResponse(
+                id=new_message.id,
+                chat_id=chat_id,
+                sender_id=user_id,
+                message=message_text,
+                created_at=new_message.created_at
+            ).model_dump()
+            response["created_at"] = response["created_at"].isoformat()
+
+            # Broadcast message to all participants except the sender
+            result = await db.execute(
+                select(ChatParticipant.user_id).where(
+                    ChatParticipant.chat_id == chat_id,
+                    ChatParticipant.user_id != user_id  # Exclude the sender
+                )
+            )
+            chat_users = result.scalars().all()
+
+            for chat_user_id in chat_users:
+                if chat_user_id in active_connections:
+                    await active_connections[chat_user_id].send_text(json.dumps(response))
+
+    except WebSocketDisconnect:
+        print(f"User {username} disconnected")
+        del active_connections[user_id]
