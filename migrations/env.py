@@ -5,7 +5,7 @@ from alembic import context
 import asyncio
 
 # Import your models
-from app.db.models import Base  # Update with your actual path
+from app.db.models.user import Base  # Update with your actual path
 
 # Load the Alembic config
 config = context.config

@@ -27,3 +27,13 @@ alembic
 
 # For handling CORS (if needed for frontend integration)
 fastapi[all]
+
+fastapi-mail
+
+python-multipart
+
+bcrypt "python-jose[cryptography]" passlib
+
+email-validator 
+
+"pydantic[email]"

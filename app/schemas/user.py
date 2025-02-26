@@ -21,7 +21,17 @@ class UserCreate(UserBase):
 class UserResponse(UserBase):
     id: int
     created_at: datetime
+    is_verified: Optional[bool] = False
     # Allows SQLAlchemy models to be converted to Pydantic
 
     class Config:
         orm_mode = True
+
+
+class OTPCreate(BaseModel):
+    email: EmailStr
+
+
+class OTPVerify(BaseModel):
+    email: EmailStr
+    otp_code: str
