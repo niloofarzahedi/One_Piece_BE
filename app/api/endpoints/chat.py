@@ -10,8 +10,10 @@ from sqlalchemy.future import select
 from datetime import datetime
 import json
 import os
+import asyncio
 from jose import JWTError, jwt
-
+from app.redis_cache.redis_messages import cache_message, get_cached_messages
+from app.redis_cache.redis_client import redis_client
 
 router = APIRouter()
 
@@ -185,25 +187,22 @@ async def websocket_endpoint(
     token: str,
     db: AsyncSession = Depends(get_db)
 ):
-    # WebSocket for authenticated users to send/receive messages
-    # Authenticate user
+    """WebSocket for authenticated users to send/receive messages and cache them in Redis."""
     await websocket.accept()
+
     # Authenticate user from token
     user = await get_current_user_from_token(token, db)
-    print(f"User {user.username} connected to WebSocket")
-
     if not user:
         await websocket.close()
-        print(f"User {user.username} not found in database")
         return
 
     user_id = user.id
     active_connections[user_id] = websocket
+    print(f"User {user.username} connected to WebSocket")
 
     try:
         while True:
             data = await websocket.receive_text()
-            print(f"Received message: {data}")
             message_data = json.loads(data)
             chat_id = message_data.get("chat_id")
             message_text = message_data.get("message")
@@ -217,29 +216,34 @@ async def websocket_endpoint(
             )
             chat_participant = result.scalars().first()
             if not chat_participant:
-                print(
-                    f"User {user.username} is not a participant in chat {chat_id}")
                 await websocket.send_text("Error: You are not a participant in this chat.")
                 continue
 
-            # Save message to database
+            # Create message payload for Redis caching
+            message_payload = {
+                "id": None,  # Will be assigned after saving to PostgreSQL
+                "chat_id": chat_id,
+                "sender_id": user_id,
+                "message": message_text,
+                "created_at": datetime.utcnow().isoformat(),
+            }
+
+            # Cache message in Redis (save it for retrieval in another API)
+            await cache_message(chat_id, message_payload)
+
+            # Save message to PostgreSQL
             new_message = ChatMessage(
-                chat_id=chat_id, sender_id=user_id, message=message_text)
+                chat_id=chat_id, sender_id=user_id, message=message_text
+            )
             db.add(new_message)
             await db.commit()
             await db.refresh(new_message)
 
-            # Create response payload
-            response = MessageResponse(
-                id=new_message.id,
-                chat_id=chat_id,
-                sender_id=user_id,
-                message=message_text,
-                created_at=new_message.created_at
-            ).model_dump()
-            response["created_at"] = response["created_at"].isoformat()
+            # Update Redis cache with actual message ID
+            message_payload["id"] = new_message.id
+            await cache_message(chat_id, message_payload)
 
-            # Broadcast message to all participants except the sender
+            # Broadcast message to all online users in the chat
             result = await db.execute(
                 select(ChatParticipant.user_id).where(
                     ChatParticipant.chat_id == chat_id,
@@ -250,9 +254,95 @@ async def websocket_endpoint(
 
             for chat_user_id in chat_users:
                 if chat_user_id in active_connections:
-                    await active_connections[chat_user_id].send_text(json.dumps(response))
+                    await active_connections[chat_user_id].send_text(json.dumps(message_payload))
 
     except WebSocketDisconnect:
         print(f"User {user.username} disconnected")
         if user_id in active_connections:
             del active_connections[user_id]
+
+
+@router.get("/{chat_id}/cached_messages", response_model=list[MessageResponse])
+async def get_cached_chat_messages(chat_id: int):
+    """Retrieve cached messages from Redis for a chat."""
+    cached_messages = await get_cached_messages(chat_id)
+    return cached_messages
+
+
+# @router.websocket("/ws/chat")
+# async def websocket_endpoint(
+#     websocket: WebSocket,
+#     token: str,
+#     db: AsyncSession = Depends(get_db)
+# ):
+#     # WebSocket for authenticated users to send/receive messages
+#     # Authenticate user
+#     await websocket.accept()
+#     # Authenticate user from token
+#     user = await get_current_user_from_token(token, db)
+#     print(f"User {user.username} connected to WebSocket")
+
+#     if not user:
+#         await websocket.close()
+#         print(f"User {user.username} not found in database")
+#         return
+
+#     user_id = user.id
+#     active_connections[user_id] = websocket
+
+#     try:
+#         while True:
+#             data = await websocket.receive_text()
+#             print(f"Received message: {data}")
+#             message_data = json.loads(data)
+#             chat_id = message_data.get("chat_id")
+#             message_text = message_data.get("message")
+
+#             # Verify user is in the chat
+#             result = await db.execute(
+#                 select(ChatParticipant).where(
+#                     ChatParticipant.chat_id == chat_id,
+#                     ChatParticipant.user_id == user_id
+#                 )
+#             )
+#             chat_participant = result.scalars().first()
+#             if not chat_participant:
+#                 print(
+#                     f"User {user.username} is not a participant in chat {chat_id}")
+#                 await websocket.send_text("Error: You are not a participant in this chat.")
+#                 continue
+
+#             # Save message to database
+#             new_message = ChatMessage(
+#                 chat_id=chat_id, sender_id=user_id, message=message_text)
+#             db.add(new_message)
+#             await db.commit()
+#             await db.refresh(new_message)
+
+#             # Create response payload
+#             response = MessageResponse(
+#                 id=new_message.id,
+#                 chat_id=chat_id,
+#                 sender_id=user_id,
+#                 message=message_text,
+#                 created_at=new_message.created_at
+#             ).model_dump()
+#             response["created_at"] = response["created_at"].isoformat()
+
+#             # Broadcast message to all participants except the sender
+#             result = await db.execute(
+#                 select(ChatParticipant.user_id).where(
+#                     ChatParticipant.chat_id == chat_id,
+#                     ChatParticipant.user_id != user_id  # Exclude the sender
+#                 )
+#             )
+#             chat_users = result.scalars().all()
+
+#             for chat_user_id in chat_users:
+#                 if chat_user_id in active_connections:
+#                     await active_connections[chat_user_id].send_text(json.dumps(response))
+
+#     except WebSocketDisconnect:
+#         print(f"User {user.username} disconnected")
+#         if user_id in active_connections:
+#             del active_connections[user_id]

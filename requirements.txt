@@ -32,10 +32,16 @@ fastapi-mail
 
 python-multipart
 
-bcrypt "python-jose[cryptography]" passlib
+bcrypt 
+python-jose[cryptography]
+passlib
 
 email-validator 
 
-"pydantic[email]"
+pydantic[email]
 
-'uvicorn[standard]'
+uvicorn[standard]
+
+#cachetools
+redis
+greenlet

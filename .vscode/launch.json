@@ -2,21 +2,19 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "FastAPI Debug",
+            "name": "Debug Uvicorn Server",
             "type": "python",
             "request": "launch",
             "module": "uvicorn",
             "args": [
-                "app.main:app", // Adjust the path if necessary
-                "--host",
-                "127.0.0.1",
-                "--port",
-                "8000",
+                "app.main:app",
                 "--reload"
             ],
-            "envFile": "${workspaceFolder}/.env",
             "console": "integratedTerminal",
-            "justMyCode": true
+            "justMyCode": false,
+            "env": {},
+            "envFile": "${workspaceFolder}/.env",
+            "cwd": "${workspaceFolder}"
         }
     ]
 }
