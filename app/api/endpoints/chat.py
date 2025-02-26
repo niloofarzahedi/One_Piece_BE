@@ -178,8 +178,6 @@ async def get_current_user_from_token(token: str, db: AsyncSession):
 # Store active WebSocket connections
 active_connections = {}
 
-# WebSocket for authenticated users to send/receive messages
-
 
 @router.websocket("/ws/chat")
 async def websocket_endpoint(
@@ -187,7 +185,7 @@ async def websocket_endpoint(
     token: str,
     db: AsyncSession = Depends(get_db)
 ):
-
+    # WebSocket for authenticated users to send/receive messages
     # Authenticate user
     await websocket.accept()
     # Authenticate user from token
@@ -255,5 +253,6 @@ async def websocket_endpoint(
                     await active_connections[chat_user_id].send_text(json.dumps(response))
 
     except WebSocketDisconnect:
-        print(f"User {username} disconnected")
-        del active_connections[user_id]
+        print(f"User {user.username} disconnected")
+        if user_id in active_connections:
+            del active_connections[user_id]
