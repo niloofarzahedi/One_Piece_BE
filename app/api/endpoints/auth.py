@@ -57,33 +57,32 @@ async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
         await db.commit()
         await db.refresh(new_user)
 
-        # Generate a random 6-digit OTP
-        otp_code = str(random.randint(100000, 999999))
+        user_data = UserResponse(
+            id=new_user.id,
+            username=new_user.username,
+            email=new_user.email,
+            created_at=new_user.created_at
+        )
 
-        # Store OTP (ensure user_id is the primary key)
-        existing_otp = await db.execute(select(OTP).filter(OTP.user_id == new_user.id))
-        otp_entry = existing_otp.scalars().first()
+        # # Generate a random 6-digit OTP
+        # otp_code = str(random.randint(100000, 999999))
 
-        if otp_entry:
-            otp_entry.otp_code = otp_code
-        else:
-            new_otp = OTP(user_id=new_user.id, otp_code=otp_code)
-            db.add(new_otp)
+        # # Store OTP (ensure user_id is the primary key)
+        # existing_otp = await db.execute(select(OTP).filter(OTP.user_id == new_user.id))
+        # otp_entry = existing_otp.scalars().first()
 
-        await db.commit()
+        # if otp_entry:
+        #     otp_entry.otp_code = otp_code
+        # else:
+        #     new_otp = OTP(user_id=new_user.id, otp_code=otp_code)
+        #     db.add(new_otp)
 
-        # Send OTP via email
-        await send_otp_email(user.email, otp_code)
+        # await db.commit()
 
-        return {
-            "message": "User registered successfully. Please check your email for the OTP.",
-            "user": UserResponse(
-                id=new_user.id,
-                username=new_user.username,
-                email=new_user.email,
-                created_at=new_user.created_at,
-            )
-        }
+        # # Send OTP via email
+        # await send_otp_email(user.email, otp_code)
+
+        return user_data
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
 

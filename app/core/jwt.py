@@ -7,8 +7,8 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET KEY", "").strip()
 REFRESH_SECRET_KEY = os.getenv("REFRESH_SECRET_KEY", "").strip()
 ALGORITHM = os.getenv("ALGORITHM")
-ACCESS_TOKEN_EXPIRE_MINUTES = os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES")
-REFRESH_TOKEN_EXPIRE_DAYS = os.getenv("REFRESH_TOKEN_EXPIRE_DAYS")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS"))
 
 
 def create_access_token(data: dict, expires_delta: timedelta = None):

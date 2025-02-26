@@ -1,8 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, func, ForeignKey, Boolean
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
-
-Base = declarative_base()
+from app.db.models.base import Base
 
 
 class User(Base):
@@ -17,6 +15,8 @@ class User(Base):
 
     otps = relationship("OTP", back_populates="user",
                         cascade="all, delete-orphan")
+    chat_participant = relationship("ChatParticipant", back_populates="user")
+    chat_message = relationship("ChatMessage", back_populates="user")
 
 
 class OTP(Base):
@@ -26,5 +26,4 @@ class OTP(Base):
         "users.id", ondelete="CASCADE"), primary_key=True, nullable=False)
     otp_code = Column(String, nullable=False)
 
-    # Relationship with User model
     user = relationship("User", back_populates="otps")
