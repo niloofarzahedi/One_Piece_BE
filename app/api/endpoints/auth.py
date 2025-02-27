@@ -26,10 +26,13 @@ async def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Async
     try:
         result = await db.execute(select(User).filter(User.username == form_data.username))
         user = result.scalars().first()
+        print("username", user.username)
         # check the provided pass with its hash
+        tick = verify_password(form_data.password, user.hashed_password)
         if not user or not verify_password(form_data.password, user.hashed_password):
             raise HTTPException(
                 status_code=400, detail="Invalid username or password")
+        print("user", user)
 
         access_token = create_access_token({"sub": user.username})
         refresh_token = create_refresh_token({"sub": user.username})
@@ -64,25 +67,44 @@ async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
             created_at=new_user.created_at
         )
 
-        # # Generate a random 6-digit OTP
-        # otp_code = str(random.randint(100000, 999999))
+        # generate OTP
+        otp_code = str(random.randint(100000, 999999))
+        otp = OTP(user_id=new_user.id, otp_code=otp_code)
+        db.add(otp)
+        await db.commit()
+        await db.refresh(otp)
 
-        # # Store OTP (ensure user_id is the primary key)
-        # existing_otp = await db.execute(select(OTP).filter(OTP.user_id == new_user.id))
-        # otp_entry = existing_otp.scalars().first()
-
-        # if otp_entry:
-        #     otp_entry.otp_code = otp_code
-        # else:
-        #     new_otp = OTP(user_id=new_user.id, otp_code=otp_code)
-        #     db.add(new_otp)
-
-        # await db.commit()
-
-        # # Send OTP via email
-        # await send_otp_email(user.email, otp_code)
+        # Send OTP via email
+        await send_otp_email(user.email, otp_code)
 
         return user_data
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+
+
+@router.post("/verify")
+async def verify_user(otp_code: str, db: AsyncSession = Depends(get_db)):
+    try:
+        print("8988888888888888888888888888888")
+        print(otp_code)
+        result = await db.execute(select(OTP).filter(OTP.otp_code == otp_code))
+        otp = result.scalars().first()
+        print("code", otp.otp_code)
+        print("userrrrrrr", otp.user_id)
+        if not otp:
+            raise HTTPException(status_code=400, detail="Invalid OTP")
+
+        result = await db.execute(select(User).filter(User.id == otp.user_id))
+        user = result.scalars().first()
+        if not user:
+            raise HTTPException(status_code=400, detail="User not found")
+
+        user.is_verified = True
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+
+        return {"message": "User verified successfully"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
 
